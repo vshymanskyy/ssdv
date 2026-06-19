@@ -980,19 +980,18 @@ char ssdv_enc_get_packet(ssdv_t *s)
 				}
 				
 				/* A packet is ready, create the headers */
-				s->out[0]   = 0x55;                /* Sync */
-				s->out[1]   = s->image_id;         /* Image ID */
-				s->out[2]   = s->packet_id >> 8;   /* Packet ID MSB */
-				s->out[3]   = s->packet_id & 0xFF; /* Packet ID LSB */
-				s->out[4]   = s->width >> 4;       /* Width / 16 */
-				s->out[5]   = s->height >> 4;      /* Height / 16 */
-				s->out[6]   = 0x00;
-				s->out[6] |= ((s->quality - 4) & 7) << 3;  /* Quality level */
-				s->out[6] |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
-				s->out[6] |= s->mcu_mode & 0x03;  /* MCU mode (2 bits) */
-				s->out[7]  = mcu_offset;          /* Next MCU offset */
-				s->out[8]  = mcu_id >> 8;         /* MCU ID MSB */
-				s->out[9]  = mcu_id & 0xFF;       /* MCU ID LSB */
+				s->out[0]   = s->image_id;         /* Image ID */
+				s->out[1]   = s->packet_id >> 8;   /* Packet ID MSB */
+				s->out[2]   = s->packet_id & 0xFF; /* Packet ID LSB */
+				s->out[3]   = s->width >> 4;       /* Width / 16 */
+				s->out[4]   = s->height >> 4;      /* Height / 16 */
+				s->out[5]   = 0x00;
+				s->out[5] |= ((s->quality - 4) & 7) << 3;  /* Quality level */
+				s->out[5] |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
+				s->out[5] |= s->mcu_mode & 0x03;  /* MCU mode (2 bits) */
+				s->out[6]  = mcu_offset;          /* Next MCU offset */
+				s->out[7]  = mcu_id >> 8;         /* MCU ID MSB */
+				s->out[8]  = mcu_id & 0xFF;       /* MCU ID LSB */
 				
 				/* Fill any remaining bytes with noise */
 				if(s->out_len > 0) ssdv_memset_prng(s->outp, s->out_len);
@@ -1171,9 +1170,9 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 	uint16_t packet_id;
 	
 	/* Read the packet header */
-	packet_id            = (packet[2] << 8) | packet[3];
-	s->packet_mcu_offset = packet[7];
-	s->packet_mcu_id     = (packet[8] << 8) | packet[9];
+	packet_id            = (packet[1] << 8) | packet[2];
+	s->packet_mcu_offset = packet[6];
+	s->packet_mcu_id     = (packet[7] << 8) | packet[8];
 	
 	if(s->packet_mcu_id != 0xFFFF)
 	{
@@ -1187,12 +1186,12 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 		const char *factor;
 		
 		/* Read the fixed headers from the packet */
-		s->image_id  = packet[1];
-		s->width     = packet[4] << 4;
-		s->height    = packet[5] << 4;
-		s->mcu_count = packet[4] * packet[5];
-		s->quality   = ((packet[6] >> 3) & 7) ^ 4;
-		s->mcu_mode  = packet[6] & 0x03;		
+		s->image_id  = packet[0];
+		s->width     = packet[3] << 4;
+		s->height    = packet[4] << 4;
+		s->mcu_count = packet[3] * packet[4];
+		s->quality   = ((packet[5] >> 3) & 7) ^ 4;
+		s->mcu_mode  = packet[5] & 0x03;		
 		s->pkt_size_payload = s->pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
 
 		/* Generate the DQT tables */
@@ -1326,7 +1325,6 @@ char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors)
 	
 	/* Testing is destructive, work on a copy */
 	memcpy(pkt, packet, pkt_size);
-	pkt[0] = 0x55;
 	
 	pkt_size_payload = pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
 	if(errors) *errors = 0;
@@ -1350,16 +1348,16 @@ char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors)
 
 void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet)
 {
-	info->image_id   = packet[1];
-	info->packet_id  = (packet[2] << 8) | packet[3];
-	info->width      = packet[4] << 4;
-	info->height     = packet[5] << 4;
-	info->eoi        = (packet[6] >> 2) & 1;
-	info->quality    = ((packet[6] >> 3) & 7) ^ 4;
-	info->mcu_mode   = packet[6] & 0x03;
-	info->mcu_offset = packet[7];
-	info->mcu_id     = (packet[8] << 8) | packet[9];
-	info->mcu_count  = packet[4] * packet[5];
+	info->image_id   = packet[0];
+	info->packet_id  = (packet[1] << 8) | packet[2];
+	info->width      = packet[3] << 4;
+	info->height     = packet[4] << 4;
+	info->eoi        = (packet[5] >> 2) & 1;
+	info->quality    = ((packet[5] >> 3) & 7) ^ 4;
+	info->mcu_mode   = packet[5] & 0x03;
+	info->mcu_offset = packet[6];
+	info->mcu_id     = (packet[7] << 8) | packet[8];
+	info->mcu_count  = packet[3] * packet[4];
 	if(info->mcu_mode == 1 || info->mcu_mode == 2) info->mcu_count *= 2;
 	else if(info->mcu_mode == 3) info->mcu_count *= 4;
 }
