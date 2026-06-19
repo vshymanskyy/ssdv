@@ -27,15 +27,12 @@ void exit_usage()
 {
 	fprintf(stderr,
 		"\n"
-		"Usage: ssdv [-e|-d] [-n] [-t <percentage>] [-c <callsign>] [-i <id>] [-q <level>] [-l <length>] [<in file>] [<out file>]\n"
+		"Usage: ssdv [-e|-d] [-t <percentage>] [-q <level>] [-l <length>] [<in file>] [<out file>]\n"
 		"\n"
 		"  -e Encode JPEG to SSDV packets.\n"
 		"  -d Decode SSDV packets to JPEG.\n"
 		"\n"
-		"  -n Encode packets with no FEC.\n"
 		"  -t For testing, drops the specified percentage of packets while decoding.\n"
-		"  -c Set the callign. Accepts A-Z 0-9 and space, up to 6 characters.\n"
-		"  -i Set the image ID (0-255).\n"
 		"  -q Set the JPEG quality level (0 to 7, defaults to 4).\n"
 		"  -l Set packet length in bytes (max: 256, default 256).\n"
 		"  -v Print data for each packet decoded.\n"
@@ -54,12 +51,9 @@ int main(int argc, char *argv[])
 	FILE *fin = stdin;
 	FILE *fout = stdout;
 	char encode = -1;
-	char type = SSDV_TYPE_NORMAL;
 	int droptest = 0;
 	int verbose = 0;
 	int errors;
-	char callsign[7];
-	uint8_t image_id = 0;
 	int8_t quality = 4;
 	int pkt_length = SSDV_PKT_SIZE;
 	ssdv_t ssdv;
@@ -68,25 +62,13 @@ int main(int argc, char *argv[])
 	uint8_t pkt[SSDV_PKT_SIZE], b[128], *jpeg;
 	size_t jpeg_length;
 	
-	callsign[0] = '\0';
-	
 	opterr = 0;
-	while((c = getopt(argc, argv, "ednc:i:q:l:t:v")) != -1)
+	while((c = getopt(argc, argv, "edq:l:t:v")) != -1)
 	{
 		switch(c)
 		{
 		case 'e': encode = 1; break;
 		case 'd': encode = 0; break;
-		case 'n': type = SSDV_TYPE_NOFEC; break;
-		case 'c':
-			if(strlen(optarg) > 6)
-			{
-				fprintf(stderr, "Warning: callsign cropped to 6 characters.\n");
-			}
-			strncpy(callsign, optarg, 6);
-			callsign[6] = '\0';
-			break;
-		case 'i': image_id = atoi(optarg); break;
 		case 'q': quality = atoi(optarg); break;
 		case 'l': pkt_length = atoi(optarg); break;
 		case 't': droptest = atoi(optarg); break;
@@ -175,9 +157,8 @@ int main(int argc, char *argv[])
 				}
 				
 				ssdv_dec_header(&p, pkt);
-				fprintf(stderr, "Decoded image packet. Image ID: %d, Resolution: %dx%d, Packet ID: %d (%d errors corrected)\n"
+				fprintf(stderr, "Decoded image packet. Resolution: %dx%d, Packet ID: %d (%d errors corrected)\n"
 				                ">> Quality: %d, EOI: %d, MCU Mode: %d, MCU Offset: %d, MCU ID: %d/%d\n",
-					p.image_id,
 					p.width,
 					p.height,
 					p.packet_id,
@@ -206,7 +187,7 @@ int main(int argc, char *argv[])
 	
 	case 1: /* Encode */
 		
-		if(ssdv_enc_init(&ssdv, type, callsign, image_id, quality, pkt_length) != SSDV_OK)
+		if(ssdv_enc_init(&ssdv, quality, pkt_length) != SSDV_OK)
 		{
 			return(-1);
 		}
