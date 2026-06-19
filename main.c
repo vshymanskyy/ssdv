@@ -175,15 +175,13 @@ int main(int argc, char *argv[])
 				}
 				
 				ssdv_dec_header(&p, pkt);
-				fprintf(stderr, "Decoded image packet. Callsign: \"%s\", Image ID: %d, Resolution: %dx%d, Packet ID: %d (%d errors corrected)\n"
-				                ">> Type: %d, Quality: %d, EOI: %d, MCU Mode: %d, MCU Offset: %d, MCU ID: %d/%d\n",
-					p.callsign_s,
+				fprintf(stderr, "Decoded image packet. Image ID: %d, Resolution: %dx%d, Packet ID: %d (%d errors corrected)\n"
+				                ">> Quality: %d, EOI: %d, MCU Mode: %d, MCU Offset: %d, MCU ID: %d/%d\n",
 					p.image_id,
 					p.width,
 					p.height,
 					p.packet_id,
 					errors,
-					p.type,
 					p.quality,
 					p.eoi,
 					p.mcu_mode,

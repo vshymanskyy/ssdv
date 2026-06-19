@@ -33,8 +33,8 @@ extern "C" {
 
 /* Packet details */
 #define SSDV_PKT_SIZE         (0x100)
-#define SSDV_PKT_SIZE_HEADER  (0x0F)
-#define SSDV_PKT_SIZE_CRC     (0x04)
+#define SSDV_PKT_SIZE_HEADER  (0x0A)
+#define SSDV_PKT_SIZE_CRC     (0x00)
 #define SSDV_PKT_SIZE_RSCODES (0x20)
 
 #define TBL_LEN (546) /* Maximum size of the DQT and DHT tables */
@@ -48,17 +48,12 @@ extern "C" {
 
 typedef struct
 {
-	/* Packet type configuration */
-	uint8_t type; /* 0 = Normal mode (nom. 224 byte packet + 32 bytes FEC),
-	                 1 = No-FEC mode (nom. 256 byte packet) */
 	uint16_t pkt_size_payload;
-	uint16_t pkt_size_crcdata;
 	int pkt_size;
 	
 	/* Image information */
 	uint16_t width;
 	uint16_t height;
-	uint32_t callsign;
 	uint8_t  image_id;
 	uint16_t packet_id;
 	uint8_t  mcu_mode;  /* 0 = 2x2, 1 = 2x1, 2 = 1x2, 3 = 1x1           */
@@ -131,9 +126,6 @@ typedef struct
 } ssdv_t;
 
 typedef struct {
-	uint8_t  type;
-	uint32_t callsign;
-	char     callsign_s[SSDV_MAX_CALLSIGN + 1];
 	uint8_t  image_id;
 	uint16_t packet_id;
 	uint16_t width;

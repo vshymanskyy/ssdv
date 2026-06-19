@@ -20,7 +20,6 @@
 #include <stdint.h>
 #include <string.h>
 #include "ssdv.h"
-#include "rs8.h"
 
 /* Recognised JPEG markers */
 enum {
@@ -213,68 +212,6 @@ static void *dtblcpy(ssdv_t *s, const void *src, size_t n)
 	return(r);
 }
 
-static uint32_t crc32(void *data, size_t length)
-{
-	uint32_t crc, x;
-	uint8_t i, *d;
-	
-	for(d = data, crc = 0xFFFFFFFF; length; length--)
-	{
-		x = (crc ^ *(d++)) & 0xFF;
-		for(i = 8; i > 0; i--)
-		{
-			if(x & 1) x = (x >> 1) ^ 0xEDB88320;
-			else x >>= 1;
-		}
-		crc = (crc >> 8) ^ x;
-	}
-	
-	return(crc ^ 0xFFFFFFFF);
-}
-
-static uint32_t encode_callsign(char *callsign)
-{
-	uint32_t x;
-	char *c;
-	
-	/* Point c at the end of the callsign, maximum of 6 characters */
-	for(x = 0, c = callsign; x < SSDV_MAX_CALLSIGN && *c; x++, c++);
-	
-	/* Encode it backwards */
-	x = 0;
-	for(c--; c >= callsign; c--)
-	{
-		x *= 40;
-		if(*c >= 'A' && *c <= 'Z') x += *c - 'A' + 14;
-		else if(*c >= 'a' && *c <= 'z') x += *c - 'a' + 14;
-		else if(*c >= '0' && *c <= '9') x += *c - '0' + 1;
-	}
-	
-	return(x);
-}
-
-static char *decode_callsign(char *callsign, uint32_t code)
-{
-	char *c, s;
-	
-	*callsign = '\0';
-	
-	/* Is callsign valid? */
-	if(code > 0xF423FFFF) return(callsign);
-	
-	for(c = callsign; code; c++)
-	{
-		s = code % 40;
-		if(s == 0) *c = '-';
-		else if(s < 11) *c = '0' + s - 1;
-		else if(s < 14) *c = '-';
-		else *c = 'A' + s - 14;
-		code /= 40;
-	}
-	*c = '\0';
-	
-	return(callsign);
-}
 
 static inline char jpeg_dht_lookup(ssdv_t *s, uint8_t *symbol, uint8_t *width)
 {
@@ -637,22 +574,6 @@ static char ssdv_process(ssdv_t *s)
 	return(SSDV_OK);
 }
 
-static void ssdv_set_packet_conf(ssdv_t *s)
-{
-	/* Configure the payload size and CRC position */
-	switch(s->type)
-	{
-	case SSDV_TYPE_NORMAL:
-		s->pkt_size_payload = s->pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC - SSDV_PKT_SIZE_RSCODES;
-		s->pkt_size_crcdata = SSDV_PKT_SIZE_HEADER + s->pkt_size_payload - 1;
-		break;
-	
-	case SSDV_TYPE_NOFEC:
-		s->pkt_size_payload = s->pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
-		s->pkt_size_crcdata = SSDV_PKT_SIZE_HEADER + s->pkt_size_payload - 1;
-		break;
-	}
-}
 
 /*****************************************************************************/
 
@@ -935,13 +856,11 @@ char ssdv_enc_init(ssdv_t *s, uint8_t type, char *callsign, uint8_t image_id, in
 	
 	memset(s, 0, sizeof(ssdv_t));
 	s->image_id = image_id;
-	s->callsign = encode_callsign(callsign);
 	s->mode = S_ENCODING;
-	s->type = type;
 	s->quality = quality;
 	s->pkt_size = pkt_size;
-	ssdv_set_packet_conf(s);
-	
+	s->pkt_size_payload = s->pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
+
 	/* Prepare the output JPEG tables */
 	s->ddqt[0] = dload_standard_dqt(s, std_dqt0, s->quality);
 	s->ddqt[1] = dload_standard_dqt(s, std_dqt1, s->quality);
@@ -1045,8 +964,6 @@ char ssdv_enc_get_packet(ssdv_t *s)
 			{
 				uint16_t mcu_id    = s->packet_mcu_id;
 				uint8_t mcu_offset = s->packet_mcu_offset;
-				uint32_t x;
-				uint8_t i;
 				
 				if(mcu_offset != 0xFF && mcu_offset >= s->pkt_size_payload)
 				{
@@ -1064,42 +981,23 @@ char ssdv_enc_get_packet(ssdv_t *s)
 				
 				/* A packet is ready, create the headers */
 				s->out[0]   = 0x55;                /* Sync */
-				s->out[1]   = 0x66 + s->type;      /* Type */
-				s->out[2]   = s->callsign >> 24;
-				s->out[3]   = s->callsign >> 16;
-				s->out[4]   = s->callsign >> 8;
-				s->out[5]   = s->callsign;
-				s->out[6]   = s->image_id;         /* Image ID */
-				s->out[7]   = s->packet_id >> 8;   /* Packet ID MSB */
-				s->out[8]   = s->packet_id & 0xFF; /* Packet ID LSB */
-				s->out[9]   = s->width >> 4;       /* Width / 16 */
-				s->out[10]  = s->height >> 4;      /* Height / 16 */
-				s->out[11]  = 0x00;
-				s->out[11] |= ((s->quality - 4) & 7) << 3;  /* Quality level */
-				s->out[11] |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
-				s->out[11] |= s->mcu_mode & 0x03;  /* MCU mode (2 bits) */
-				s->out[12]  = mcu_offset;          /* Next MCU offset */
-				s->out[13]  = mcu_id >> 8;         /* MCU ID MSB */
-				s->out[14]  = mcu_id & 0xFF;       /* MCU ID LSB */
+				s->out[1]   = s->image_id;         /* Image ID */
+				s->out[2]   = s->packet_id >> 8;   /* Packet ID MSB */
+				s->out[3]   = s->packet_id & 0xFF; /* Packet ID LSB */
+				s->out[4]   = s->width >> 4;       /* Width / 16 */
+				s->out[5]   = s->height >> 4;      /* Height / 16 */
+				s->out[6]   = 0x00;
+				s->out[6] |= ((s->quality - 4) & 7) << 3;  /* Quality level */
+				s->out[6] |= (r == SSDV_EOI ? 1 : 0) << 2; /* EOI flag (1 bit) */
+				s->out[6] |= s->mcu_mode & 0x03;  /* MCU mode (2 bits) */
+				s->out[7]  = mcu_offset;          /* Next MCU offset */
+				s->out[8]  = mcu_id >> 8;         /* MCU ID MSB */
+				s->out[9]  = mcu_id & 0xFF;       /* MCU ID LSB */
 				
 				/* Fill any remaining bytes with noise */
 				if(s->out_len > 0) ssdv_memset_prng(s->outp, s->out_len);
-				
-				/* Calculate the CRC codes */
-				x = crc32(&s->out[1], s->pkt_size_crcdata);
-				
-				i = 1 + s->pkt_size_crcdata;
-				s->out[i++] = (x >> 24) & 0xFF;
-				s->out[i++] = (x >> 16) & 0xFF;
-				s->out[i++] = (x >> 8) & 0xFF;
-				s->out[i++] = x & 0xFF;
-				
-				/* Generate the RS codes */
-				if(s->type == SSDV_TYPE_NORMAL)
-				{
-					encode_rs_8(&s->out[1], &s->out[i], SSDV_PKT_SIZE - s->pkt_size);
-				}
-				
+
+
 				s->packet_id++;
 				
 				/* Have we reached the end of the image data? */
@@ -1273,9 +1171,9 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 	uint16_t packet_id;
 	
 	/* Read the packet header */
-	packet_id            = (packet[7] << 8) | packet[8];
-	s->packet_mcu_offset = packet[12];
-	s->packet_mcu_id     = (packet[13] << 8) | packet[14];
+	packet_id            = (packet[2] << 8) | packet[3];
+	s->packet_mcu_offset = packet[7];
+	s->packet_mcu_id     = (packet[8] << 8) | packet[9];
 	
 	if(s->packet_mcu_id != 0xFFFF)
 	{
@@ -1287,21 +1185,16 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 	if(s->packet_id == 0)
 	{
 		const char *factor;
-		char callsign[SSDV_MAX_CALLSIGN + 1];
 		
 		/* Read the fixed headers from the packet */
-		s->type      = packet[1] - 0x66;
-		s->callsign  = (packet[2] << 24) | (packet[3] << 16) | (packet[4] << 8) | packet[5];
-		s->image_id  = packet[6];
-		s->width     = packet[9] << 4;
-		s->height    = packet[10] << 4;
-		s->mcu_count = packet[9] * packet[10];
-		s->quality   = ((packet[11] >> 3) & 7) ^ 4;
-		s->mcu_mode  = packet[11] & 0x03;
-		
-		/* Configure the payload size and CRC position */
-		ssdv_set_packet_conf(s);
-		
+		s->image_id  = packet[1];
+		s->width     = packet[4] << 4;
+		s->height    = packet[5] << 4;
+		s->mcu_count = packet[4] * packet[5];
+		s->quality   = ((packet[6] >> 3) & 7) ^ 4;
+		s->mcu_mode  = packet[6] & 0x03;		
+		s->pkt_size_payload = s->pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
+
 		/* Generate the DQT tables */
 		s->sdqt[0] = sload_standard_dqt(s, std_dqt0, s->quality);
 		s->sdqt[1] = sload_standard_dqt(s, std_dqt1, s->quality);
@@ -1317,7 +1210,6 @@ char ssdv_dec_feed(ssdv_t *s, uint8_t *packet)
 		}
 		
 		/* Display information about the image */
-		fprintf(stderr, "Callsign: %s\n", decode_callsign(callsign, s->callsign));
 		fprintf(stderr, "Image ID: %02X\n", s->image_id);
 		fprintf(stderr, "Resolution: %ix%i\n", s->width, s->height);
 		fprintf(stderr, "MCU blocks: %i\n", s->mcu_count);
@@ -1429,92 +1321,20 @@ char ssdv_dec_get_jpeg(ssdv_t *s, uint8_t **jpeg, size_t *length)
 char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors)
 {
 	uint8_t pkt[SSDV_PKT_SIZE];
-	uint8_t type;
 	uint16_t pkt_size_payload;
-	uint16_t pkt_size_crcdata;
 	ssdv_packet_info_t p;
-	uint32_t x;
-	int i;
 	
 	/* Testing is destructive, work on a copy */
 	memcpy(pkt, packet, pkt_size);
 	pkt[0] = 0x55;
 	
-	type = SSDV_TYPE_INVALID;
-	
-	if(pkt[1] == 0x66 + SSDV_TYPE_NOFEC)
-	{
-		/* Test for a valid NOFEC packet */
-		pkt_size_payload = pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
-		pkt_size_crcdata = SSDV_PKT_SIZE_HEADER + pkt_size_payload - 1;
-		
-		/* No FEC scan */
-		if(errors) *errors = 0;
-		
-		/* Test the checksum */
-		x = crc32(&pkt[1], pkt_size_crcdata);
-		
-		i = 1 + pkt_size_crcdata;
-		if(x == (pkt[i + 3] | (pkt[i + 2] << 8) | (pkt[i + 1] << 16) | (pkt[i] << 24)))
-		{
-			/* Valid, set the type and continue */
-			type = SSDV_TYPE_NOFEC;
-		}
-	}
-	else if(pkt[1] == 0x66 + SSDV_TYPE_NORMAL)
-	{
-		/* Test for a valid NORMAL packet */
-		pkt_size_payload = pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC - SSDV_PKT_SIZE_RSCODES;
-		pkt_size_crcdata = SSDV_PKT_SIZE_HEADER + pkt_size_payload - 1;
-		
-		/* No FEC scan */
-		if(errors) *errors = 0;
-		
-		/* Test the checksum */
-		x = crc32(&pkt[1], pkt_size_crcdata);
-		
-		i = 1 + pkt_size_crcdata;
-		if(x == (pkt[i + 3] | (pkt[i + 2] << 8) | (pkt[i + 1] << 16) | (pkt[i] << 24)))
-		{
-			/* Valid, set the type and continue */
-			type = SSDV_TYPE_NORMAL;
-		}
-	}
-	
-	if(type == SSDV_TYPE_INVALID)
-	{
-		/* Test for a valid NORMAL packet with correctable errors */
-		pkt_size_payload = pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC - SSDV_PKT_SIZE_RSCODES;
-		pkt_size_crcdata = SSDV_PKT_SIZE_HEADER + pkt_size_payload - 1;
-		
-		/* Run the reed-solomon decoder */
-		pkt[1] = 0x66 + SSDV_TYPE_NORMAL;
-		i = decode_rs_8(&pkt[1], 0, 0, SSDV_PKT_SIZE - pkt_size);
-		
-		if(i < 0) return(-1); /* Reed-solomon decoder failed */
-		if(errors) *errors = i;
-		
-		/* Test the checksum */
-		x = crc32(&pkt[1], pkt_size_crcdata);
-		
-		i = 1 + pkt_size_crcdata;
-		if(x == (pkt[i + 3] | (pkt[i + 2] << 8) | (pkt[i + 1] << 16) | (pkt[i] << 24)))
-		{
-			/* Valid, set the type and continue */
-			type = SSDV_TYPE_NORMAL;
-		}
-	}
-	
-	if(type == SSDV_TYPE_INVALID)
-	{
-		/* All attempts to read the packet have failed */
-		return(-1);
-	}
-	
+	pkt_size_payload = pkt_size - SSDV_PKT_SIZE_HEADER - SSDV_PKT_SIZE_CRC;
+	if(errors) *errors = 0;
+
+
 	/* Sanity checks */
 	ssdv_dec_header(&p, pkt);
-	
-	if(p.type != type) return(-1);
+
 	if(p.width == 0 || p.height == 0) return(-1);
 	if(p.mcu_id != 0xFFFF)
 	{
@@ -1530,19 +1350,16 @@ char ssdv_dec_is_packet(uint8_t *packet, int pkt_size, int *errors)
 
 void ssdv_dec_header(ssdv_packet_info_t *info, uint8_t *packet)
 {
-	info->type       = packet[1] - 0x66;
-	info->callsign   = (packet[2] << 24) | (packet[3] << 16) | (packet[4] << 8) | packet[5];
-	decode_callsign(info->callsign_s, info->callsign);
-	info->image_id   = packet[6];
-	info->packet_id  = (packet[7] << 8) | packet[8];
-	info->width      = packet[9] << 4;
-	info->height     = packet[10] << 4;
-	info->eoi        = (packet[11] >> 2) & 1;
-	info->quality    = ((packet[11] >> 3) & 7) ^ 4;
-	info->mcu_mode   = packet[11] & 0x03;
-	info->mcu_offset = packet[12];
-	info->mcu_id     = (packet[13] << 8) | packet[14];
-	info->mcu_count  = packet[9] * packet[10];
+	info->image_id   = packet[1];
+	info->packet_id  = (packet[2] << 8) | packet[3];
+	info->width      = packet[4] << 4;
+	info->height     = packet[5] << 4;
+	info->eoi        = (packet[6] >> 2) & 1;
+	info->quality    = ((packet[6] >> 3) & 7) ^ 4;
+	info->mcu_mode   = packet[6] & 0x03;
+	info->mcu_offset = packet[7];
+	info->mcu_id     = (packet[8] << 8) | packet[9];
+	info->mcu_count  = packet[4] * packet[5];
 	if(info->mcu_mode == 1 || info->mcu_mode == 2) info->mcu_count *= 2;
 	else if(info->mcu_mode == 3) info->mcu_count *= 4;
 }

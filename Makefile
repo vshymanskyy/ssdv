@@ -5,8 +5,8 @@ LDFLAGS=-g
 
 all: ssdv
 
-ssdv: main.o ssdv.o rs8.o ssdv.h rs8.h
-	$(CC) $(LDFLAGS) main.o ssdv.o rs8.o -o ssdv
+ssdv: main.o ssdv.o ssdv.h
+	$(CC) $(LDFLAGS) main.o ssdv.o -o ssdv
 
 .c.o:
 	$(CC) $(CFLAGS) -c $< -o $@
